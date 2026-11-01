@@ -1,0 +1,58 @@
+name: Collect Spotify history
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: spotify-history
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::httr2
+            any::dplyr
+            any::purrr
+            any::janitor
+            any::lubridate
+            any::kableExtra
+            any::tibble
+            any::tidyverse
+          cache-version: 1
+      - name: Check credentials
+        shell: bash
+        run: |
+          test -n "$SPOTIFY_REFRESH_TOKEN" || { echo 'Missing SPOTIFY_REFRESH_TOKEN secret'; exit 1; }
+      - name: Fetch, append, deduplicate and recalculate
+        run: Rscript run_all.R
+      - name: Commit updated CSV files
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- data/new-batch.csv dist/collecting-dmj-spotify-hist.csv
+          if git diff --cached --quiet; then
+            echo 'No CSV changes to commit.'
+          else
+            git commit -m 'Update Spotify listening history'
+            git pull --rebase origin "${{ github.event.repository.default_branch }}"
+            git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          fi
